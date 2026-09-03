@@ -85,13 +85,20 @@ class NowPlayingController(
     private val clockFormat = SimpleDateFormat("H:mm", Locale.KOREA)
     private val dateFormat = SimpleDateFormat("M월 d일 EEEE", Locale.KOREA)
 
-    /** 재생 중일 때만 도는 바이닐(CD) 회전 애니메이션 */
-    private val vinylAnimator = android.animation.ObjectAnimator.ofFloat(
-        cardVinyl, View.ROTATION, 0f, 360f
-    ).apply {
-        duration = 1800
-        repeatCount = android.animation.ObjectAnimator.INFINITE
-        interpolator = android.view.animation.LinearInterpolator()
+    /** CD 회전: 목표 속도를 향해 서서히 가속/감속하며 도는 수동 회전 애니메이션 */
+    private var vinylVelocity = 0f          // 현재 각속도 (도/프레임)
+    private var vinylTargetVelocity = 0f    // 목표 각속도 (재생 중이면 최고 속도, 아니면 0)
+    private val vinylFullSpeed = 6.4f       // 최고 속도일 때 각속도 (약 0.9초에 한 바퀴)
+    private val vinylEasing = 0.08f         // 클수록 가속/감속이 빨라짐
+
+    private val vinylTicker = object : Runnable {
+        override fun run() {
+            vinylVelocity += (vinylTargetVelocity - vinylVelocity) * vinylEasing
+            if (vinylVelocity > 0.01f || vinylTargetVelocity > 0f) {
+                cardVinyl.rotation = (cardVinyl.rotation + vinylVelocity) % 360f
+            }
+            handler.postDelayed(this, 16)
+        }
     }
 
     private val controllerCallback = object : MediaController.Callback() {
@@ -185,8 +192,7 @@ class NowPlayingController(
     /** 화면이 보이기 시작할 때 호출 */
     fun start() {
         context.registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        vinylAnimator.start()
-        vinylAnimator.pause()
+        handler.post(vinylTicker)
         applyModeVisibility()
         updateToggleIcon()
 
@@ -207,7 +213,7 @@ class NowPlayingController(
     /** 화면이 사라질 때 호출 (리스너/핸들러 정리) */
     fun stop() {
         handler.removeCallbacks(progressTicker)
-        vinylAnimator.cancel()
+        handler.removeCallbacks(vinylTicker)
         activeController?.unregisterCallback(controllerCallback)
         try {
             sessionManager.removeOnActiveSessionsChangedListener(sessionsChangedListener)
@@ -389,7 +395,7 @@ class NowPlayingController(
         val icon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         btnPlayPause.setImageResource(icon)
         btnMiniPlayPause.setImageResource(icon)
-        if (isPlaying) vinylAnimator.resume() else vinylAnimator.pause()
+        vinylTargetVelocity = if (isPlaying) vinylFullSpeed else 0f
     }
 
     private fun tickProgress() {
